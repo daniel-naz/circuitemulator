@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SVG Drawer with Menu</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div id="toolbar">
+        <label for="shape">Draw: </label>
+        <select id="shape">
+            <option value="line">Line</option>
+            <option value="rect">Rectangle</option>
+            <option value="circle">Circle</option>
+            <option value="arc">Arc</option>
+        </select>
+        <button id="exportBtn">Export SVG</button>
+    </div>
+
+    <svg id="drawingArea">
+        <pattern id="grid" width="16" height="16" patternUnits="userSpaceOnUse">
+            <path d="M16 0 H0 V16" fill="none" stroke="#ccc" stroke-width="0.5" />
+        </pattern>
+        <rect width="100%" height="100%" fill="url(#grid)" />
+    </svg>
+
+    <script>
+        const svg = document.getElementById('drawingArea');
+        const shapeSelect = document.getElementById('shape');
+        const exportBtn = document.getElementById('exportBtn');
+
+        let isDrawing = false;
+        let start = null;
+        let currentShape = null;
+
+        const history = [];
+        const redoStack = [];
+
+        svg.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            start = getMousePosition(e);
+
+            const shapeType = shapeSelect.value;
+            currentShape = createShapeElement(shapeType, start);
+
+            if (currentShape) {
+                svg.appendChild(currentShape);
+            }
+        });
+
+        svg.addEventListener('mousemove', (e) => {
+            if (!isDrawing || !currentShape) return;
+
+            const pos = getMousePosition(e);
+            updateShape(currentShape, shapeSelect.value, start, pos);
+        });
+
+        svg.addEventListener('mouseup', () => {
+            if (currentShape) {
+                history.push(currentShape);
+                trimHistory()
+                redoStack.length = 0; // Clear redo stack after new action
+            }
+            isDrawing = false;
+            currentShape = null;
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                undo();
+            }
+            if (e.ctrlKey && e.key.toLowerCase() === 'y') {
+                e.preventDefault();
+                redo();
+            }
+        });
+
+        svg.addEventListener('mouseleave', () => {
+            isDrawing = false;
+            currentShape = null;
+        });
+
+        exportBtn.addEventListener('click', () => {
+            // Temporarily remove the grid
+            const gridRect = document.querySelector('rect[fill^="url(#grid"]');
+            const gridDefs = document.querySelector('defs');
+
+            if (gridRect) gridRect.remove();
+            if (gridDefs) gridDefs.remove();
+
+            // Clone and compute tight bounding box
+            const bbox = svg.getBBox();
+            const strokePadding = 10; // Adjust if needed (max stroke-width + margin)
+            const paddedBox = {
+                x: bbox.x - strokePadding,
+                y: bbox.y - strokePadding,
+                width: bbox.width + 2 * strokePadding,
+                height: bbox.height + 2 * strokePadding
+            };
+
+            const clone = svg.cloneNode(true);
+            clone.setAttribute('viewBox', `${paddedBox.x} ${paddedBox.y} ${paddedBox.width} ${paddedBox.height}`);
+            clone.setAttribute('width', paddedBox.width);
+            clone.setAttribute('height', paddedBox.height);
+            clone.removeAttribute('style');
+
+            // Export
+            const svgData = new XMLSerializer().serializeToString(clone);
+            const blob = new Blob([svgData], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'drawing.svg';
+            link.click();
+
+            URL.revokeObjectURL(url);
+
+            // Restore grid
+            if (gridDefs) svg.insertBefore(gridDefs, svg.firstChild);
+            if (gridRect) svg.insertBefore(gridRect, svg.firstChild.nextSibling);
+        });
+
+        const MAX_HISTORY = 100;
+        function trimHistory() {
+            if (history.length > MAX_HISTORY) {
+                history.shift();
+            }
+        }
+
+        function undo() {
+            const shape = history.pop();
+            if (shape) {
+                svg.removeChild(shape);
+                redoStack.push(shape);
+            }
+        }
+
+        function redo() {
+            const shape = redoStack.pop();
+            if (shape) {
+                svg.appendChild(shape);
+                history.push(shape);
+            }
+        }
+
+        function snapToGrid(x, y, gridSize = 16) {
+            return {
+                x: Math.round(x / gridSize) * gridSize,
+                y: Math.round(y / gridSize) * gridSize
+            };
+        }
+
+        function getMousePosition(evt) {
+            const CTM = svg.getScreenCTM();
+            const x = (evt.clientX - CTM.e) / CTM.a;
+            const y = (evt.clientY - CTM.f) / CTM.d;
+            return snapToGrid(x, y);
+        }
+
+        function createShapeElement(type, start) {
+            const ns = "http://www.w3.org/2000/svg";
+
+            switch (type) {
+                case 'line': {
+                    const line = document.createElementNS(ns, 'line');
+                    line.setAttribute('x1', start.x);
+                    line.setAttribute('y1', start.y);
+                    line.setAttribute('x2', start.x);
+                    line.setAttribute('y2', start.y);
+                    styleShape(line);
+                    return line;
+                }
+                case 'rect': {
+                    const rect = document.createElementNS(ns, 'rect');
+                    rect.setAttribute('x', start.x);
+                    rect.setAttribute('y', start.y);
+                    rect.setAttribute('width', 0);
+                    rect.setAttribute('height', 0);
+                    styleShape(rect);
+                    return rect;
+                }
+                case 'circle': {
+                    const circle = document.createElementNS(ns, 'circle');
+                    circle.setAttribute('cx', start.x);
+                    circle.setAttribute('cy', start.y);
+                    circle.setAttribute('r', 0);
+                    styleShape(circle);
+                    return circle;
+                }
+                case 'arc': {
+                    const path = document.createElementNS(ns, 'path');
+                    path.setAttribute('d', ''); // will be set on mousemove
+                    styleShape(path);
+                    return path;
+                }
+
+                default: return null;
+            }
+        }
+
+        function updateShape(shape, type, start, end) {
+            switch (type) {
+                case 'line':
+                    shape.setAttribute('x2', end.x);
+                    shape.setAttribute('y2', end.y);
+                    break;
+                case 'rect':
+                    const x = Math.min(start.x, end.x);
+                    const y = Math.min(start.y, end.y);
+                    const width = Math.abs(end.x - start.x);
+                    const height = Math.abs(end.y - start.y);
+                    shape.setAttribute('x', x);
+                    shape.setAttribute('y', y);
+                    shape.setAttribute('width', width);
+                    shape.setAttribute('height', height);
+                    break;
+                case 'circle':
+                    const dx = end.x - start.x;
+                    const dy = end.y - start.y;
+                    const radius = Math.sqrt(dx * dx + dy * dy);
+                    shape.setAttribute('r', radius);
+                    break;
+                case 'arc': {
+                    const dx = end.x - start.x;
+                    const dy = end.y - start.y;
+                    const radius = Math.sqrt(dx * dx + dy * dy) / 2;
+
+                    const largeArcFlag = 0;
+                    const sweepFlag = 1;
+
+                    const d = `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArcFlag} ${sweepFlag} ${end.x} ${end.y}`;
+                    shape.setAttribute('d', d);
+                    break;
+                }
+            }
+        }
+
+        function styleShape(shape) {
+            shape.setAttribute('stroke', 'black');
+            shape.setAttribute('stroke-width', 2);
+            shape.setAttribute('fill', 'none');
+        }
+    </script>
+</body>
+
+</html>

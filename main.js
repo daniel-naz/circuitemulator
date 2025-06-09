@@ -2,8 +2,8 @@ import canvas from "./canvas.js";
 // import { ComputationalComponent } from "./component.js";
 import globals from "./global.js";
 import utils from "./utils.js";
-import component, { Component } from "./component.js";
-import { ComputeComponent, ConnectorNode } from "./component.js";
+import component from "./component.js";
+import { Line } from "./line.js";
 
 
 const svg = document.getElementById("canvas");
@@ -13,86 +13,21 @@ function convertToGrid(x, y) {
     return [Math.round(x / grid) * grid, Math.round(y / grid) * grid]
 }
 
-
-function addOrthogonalPoint(path, newPoint) {
-    if (path.length === 0) {
-        return [newPoint];
-    }
-
-    const last = path[path.length - 1];
-
-    // If already aligned, just connect directly
-    if (last.x === newPoint.x || last.y === newPoint.y) {
-        return [...path, newPoint];
-    }
-
-    // Determine previous direction
-    let dx = 0;
-    let dy = 0;
-    if (path.length >= 2) {
-        const secondLast = path[path.length - 2];
-        dx = last.x - secondLast.x;
-        dy = last.y - secondLast.y;
-    }
-
-    let bend;
-    if (Math.abs(dx) > 0) {
-        bend = { x: newPoint.x, y: last.y };
-    } else if (Math.abs(dy) > 0) {
-        bend = { x: last.x, y: newPoint.y };
-    } else {
-        bend = { x: newPoint.x, y: last.y };
-    }
-
-    return [...path, bend, newPoint];
-}
-
-
-function updateSvgLine(line, points) {
-    line.setAttribute("points", points.map((e) => [e.x, e.y]).join(" "));
-}
-
-function createPolyline(points = [], attributes = {}) {
-    const svgNS = "http://www.w3.org/2000/svg";
-    const polyline = document.createElementNS(svgNS, "polyline");
-
-    // Set the 'points' attribute
-    const pointsString = points.map(p => `${p.x},${p.y}`).join(" ");
-    polyline.setAttribute("points", pointsString);
-
-    // Set default visual attributes if not provided
-    polyline.setAttribute("fill", attributes.fill ?? "none");
-    polyline.setAttribute("stroke", attributes.stroke ?? "black");
-    polyline.setAttribute("stroke-width", attributes["stroke-width"] ?? "2");
-
-    // Set any additional attributes
-    for (const [key, value] of Object.entries(attributes)) {
-        polyline.setAttribute(key, value);
-    }
-
-    return polyline;
-}
-
-let linepoints = []
-let creatingLine = false;
 let line = undefined
 let startconnector = undefined
 
-// // ----- Initilize canvas events -----
+// ----- Initilize canvas events -----
 svg.addEventListener("mousedown", (e) => {
     const [x, y] = canvas.getGlobalMouse(e)
     const [gx, gy] = convertToGrid(x, y)
-
     if (e.button == 2) {
         if (line) {
-            svg.removeChild(line)
+            svg.removeChild(line.model.svg)
             line = undefined
-            linepoints.length = 0
         }
     }
     if (line) {
-        linepoints = addOrthogonalPoint(linepoints, { x: gx, y: gy })
-        updateSvgLine(line, linepoints)
+        line.addPoint({ x: gx, y: gy })
     }
 
     const n = component.isInNode(x, y)
@@ -100,10 +35,9 @@ svg.addEventListener("mousedown", (e) => {
     if (n) {
         if (!line) {
             startconnector = n;
-            linepoints = addOrthogonalPoint([], { x: gx, y: gy }); // Start fresh
-            line = createPolyline();
-            updateSvgLine(line, linepoints);
-            svg.appendChild(line);
+            line = new Line()
+            line.addPoint({ x: gx, y: gy })
+            svg.appendChild(line.model.svg);
         } else {
             if (n.type == 'input') {
                 startconnector.parent.nextComponents.push(n.parent)
@@ -114,7 +48,6 @@ svg.addEventListener("mousedown", (e) => {
                 n.nextNodes.push(startconnector)
             }
             line = undefined;
-            linepoints.length = 0;
         }
     }
     else if (currentComponent) {
@@ -138,9 +71,8 @@ svg.addEventListener("mousemove", (e) => {
     const [gx, gy] = convertToGrid(x, y)
 
     if (line) {
-        const tempPoints = [...linepoints]
-        const newTemp = addOrthogonalPoint(tempPoints, { x: gx, y: gy })
-        updateSvgLine(line, newTemp)
+        line.addPoint({ x: gx, y: gy })
+        line.removeLast()
     }
     else if (currentComponent) {
         currentComponent.transform.setPosition(gx, gy)
@@ -149,7 +81,6 @@ svg.addEventListener("mousemove", (e) => {
         canvas.updatePanning(e)
     }
 });
-
 
 svg.addEventListener("mouseup", (e) => {
     canvas.stopPanning(e)

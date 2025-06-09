@@ -16,6 +16,13 @@ function convertToGrid(x, y) {
 let line = undefined
 let startconnector = undefined
 
+
+let isSelecting = false;
+let selectStart = { x: 0, y: 0 };
+let selectionRect = null;
+
+
+
 // ----- Initilize canvas events -----
 svg.addEventListener("mousedown", (e) => {
     const [x, y] = canvas.getGlobalMouse(e)
@@ -58,7 +65,28 @@ svg.addEventListener("mousedown", (e) => {
         c.onClick?.(e)
     }
     else {
-        canvas.startPanning(e)
+        if (e.button == 2) {
+            canvas.startPanning(e)
+        }
+        else if (e.button == 0 && !selectionRect) {
+            // Middle-click — start selection
+            isSelecting = true;
+            const pt = getSvgPoint(e);
+            selectStart = pt;
+
+            // Create the selection rectangle
+            selectionRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            selectionRect.setAttribute("x", pt.x);
+            selectionRect.setAttribute("y", pt.y);
+            selectionRect.setAttribute("width", 0);
+            selectionRect.setAttribute("height", 0);
+            selectionRect.setAttribute("fill", "rgba(0,0,255,0.3)");
+            selectionRect.setAttribute("stroke", "blue");
+            selectionRect.setAttribute("stroke-width", "1");
+            selectionRect.setAttribute("pointer-events", "none"); // let mouse events pass through
+
+            svg.appendChild(selectionRect);
+        }
     }
 });
 
@@ -70,7 +98,19 @@ svg.addEventListener("mousemove", (e) => {
     const [x, y] = canvas.getGlobalMouse(e)
     const [gx, gy] = convertToGrid(x, y)
 
-    if (line) {
+    if (isSelecting && selectionRect) {
+        const pt = getSvgPoint(e);
+        const x = Math.min(pt.x, selectStart.x);
+        const y = Math.min(pt.y, selectStart.y);
+        const width = Math.abs(pt.x - selectStart.x);
+        const height = Math.abs(pt.y - selectStart.y);
+
+        selectionRect.setAttribute("x", x);
+        selectionRect.setAttribute("y", y);
+        selectionRect.setAttribute("width", width);
+        selectionRect.setAttribute("height", height);
+    }
+    else if (line) {
         line.addPoint({ x: gx, y: gy })
         line.removeLast()
     }
@@ -84,7 +124,22 @@ svg.addEventListener("mousemove", (e) => {
 
 svg.addEventListener("mouseup", (e) => {
     canvas.stopPanning(e)
+
+    if (e.button == 0 && selectionRect) {
+        isSelecting = false;
+        // Optionally keep it or remove it:
+        svg.removeChild(selectionRect);
+        selectionRect = null;
+    }
 });
+
+function getSvgPoint(e) {
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
 
 svg.addEventListener("mouseleave", (e) => {
     canvas.stopPanning(e)
@@ -116,10 +171,10 @@ utils.menu.createMenuDropdownButton("File", "Save", () => {
     const components = component.getAllComponents()
     var length = 2 + components.length * 8 * 5
     var index = 2
-    
+
     const arr = new Uint8Array(length)
     arr.set([(length >> 8) & 0xff, length & 0xff])
-    
+
     for (const c of components) {
         const temp = c.toBin()
         arr.set(temp, index);
@@ -141,9 +196,9 @@ let intervalId = undefined
 
 utils.menu.createMenuButton('Start simulation', (args) => {
     const elem = document.getElementById('Start simulation')
-    
+
     if (simRunning) {
-        elem.innerText = 'Start simulation' 
+        elem.innerText = 'Start simulation'
         clearInterval(intervalId)
     }
     else {
